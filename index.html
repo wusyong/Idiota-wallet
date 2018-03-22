@@ -45,10 +45,16 @@
   returnAll (If true, it returns all addresses which were deterministically generated (until findTransactions returns null))<br>
   <input type="checkbox" name="deterministic" id="deterministic"/>
   <br>
+  AttachtoTangle
+  <input type="checkbox" name="attach" id="attach"/>
+  <br>
   <button onclick="generateAddresses()">Generate addresses</button>
 
-  <br>
+  <!-- Account Detail-->
+  <button onclick="accountData()">Show account data</button>
   <div id='result'></div>
+  <br>@@@
+  <div id='output2'></div>
 
 
   <script type="text/javascript">
@@ -164,9 +170,9 @@
 
   // addressgen
   const getNewAddressPromise = function(options, output) {
+
   	return new Promise(function(resolve, reject){
   		let iota = getIOTA();
-
   		iota.api.getNewAddress(sessionStorage.getItem('seed'), options, function(error, inputs){
   			if (error) {
   				reject(error);
@@ -180,7 +186,6 @@
   					}
   					msg += "<"+"/div>";
   					msg += "<"+"/br><"+"/br>";
-            console.log(msg);
   					document.getElementById(output).innerHTML = msg;
   				}
   				resolve(inputs);
@@ -189,9 +194,42 @@
   	});
   }
 
+  const sendTransferPromise = function(depth, minWeightMagnitude, transfer, output) {
+
+  	return new Promise(function(resolve, reject){
+  		let iota = getIOTA();
+  		iota.api.sendTransfer(sessionStorage.getItem('seed'), depth, minWeightMagnitude, transfer, function( e, attach ) {
+  			if(!e) {
+  				if(output != null) {
+  					let msg = '<div class="container">';
+  					msg += '<pre>';
+  					if(attach.length == 0) {
+  						msg += 'No data found \n';
+  					} else {
+  						attach.forEach(function(tx) {
+  							msg += 'Successfully attached address '+tx.address+' to the Tangle with transaction:<br /><br />';
+  							msg += JSON.stringify(tx, null, "\t");
+  							msg += '\n\n';
+  						});
+  					}
+  					msg += '<'+'/pre>';
+  					msg += '<'+'/div>';
+  					msg += "<"+"/br><"+"/br>";
+  					document.getElementById(output).innerHTML += msg;
+  				}
+  				resolve(attach);
+  			} else {
+  				reject(e);
+  			}
+  		});
+
+  	});
+  }
+
   function generateAddresses(){
     checkSeedStorage();
     let deterministic = document.getElementById('deterministic').checked;
+    let attach = document.getElementById('attach').checked;
     let optionsNewAddress = {
 			index: parseInt(document.getElementById('keyIndexStart').value),
 			checksum: document.getElementById('checksum').checked,
@@ -201,11 +239,33 @@
 
     if(!deterministic) {
       optionsNewAddress.total = parseInt(document.getElementById('numberOfAddresses').value);
-      console.log("in");
+      getNewAddressPromise(optionsNewAddress, 'result').catch(function(e){
+        alert(e);
+      });
+    } else {
+      getNewAddressPromise(optionsNewAddress, 'result').then(function(inputs){
+				let latestAddress = inputs[inputs.length - 1];
+				// Attach the address to the tangle with an empty message transaction
+        if(attach){
+          let transfer = [{
+  					address: latestAddress,
+  					value: 0,
+  					message: '',
+  					tag: ''
+  				}];
+
+  				let optionsSendTransfer = {
+  					security: 2
+  				};
+
+  				return sendTransferPromise(3, 9, transfer, 'result');
+        }
+
+			}).catch(function(e){
+				alert(e);
+			});
     }
-    getNewAddressPromise(optionsNewAddress, 'result').catch(function(e){
-      alert(e);
-    });
+
   }
 
   // getNodeInfo
@@ -235,6 +295,139 @@
       //clearOutput();
       alert(e);
     });
+  }
+
+  // accountData
+  const getAccountDataPromise = function(output) {
+
+  	return new Promise(function(resolve, reject){
+  		let iota = getIOTA();
+
+  		iota.api.getAccountData(sessionStorage.getItem('seed'), function(error, accountData){
+
+  			if(!error) {
+  				if(output != null) {
+  					let msg = '<div class="container">';
+  					msg += '<pre>';
+  					msg += 'Overview:<br />';
+  					let counter = 0;
+
+  					const addresses = accountData.addresses;
+  					const transfers = accountData.transfers;
+
+  					const categorizedTransfers = iota.utils.categorizeTransfers(transfers, addresses);
+  					const receivedTransfers = categorizedTransfers.received;
+  					const sentTransfers = categorizedTransfers.sent;
+
+  					// Loop thru all the addresses which are attached to the tangle
+  					addresses.forEach(function(usedAddress) {
+
+  						// Get the balance for each address
+  						let found = accountData.inputs.filter(function(input) {
+  							return input.address == usedAddress;
+  						});
+
+  						let balance = (found[0] != null) ? found[0].balance : 0;
+
+  						msg += counter +" - "+ usedAddress + " - balance = "+balance+"<br />";
+  						counter++;
+  					});
+  					msg += '<br /><br />';
+
+  					msg += 'Latest, UNUSED address which has no transactions in the tangle:<br />';
+  					msg += accountData.latestAddress;
+  					msg += '<br /><br />';
+  					msg += 'latest confirmed balance:<br />';
+  					msg += accountData.balance;
+  					msg += '<br /><br />';
+  					msg += 'List of all inputs available for the seed:<br />';
+  					msg += JSON.stringify(accountData.inputs, null, "\t");
+  					msg += '<br /><br />';
+  					msg += 'List of all USED addresses which have transactions associated with them:<br />';
+  					msg += JSON.stringify(addresses, null, "\t");
+  					msg += '<br /><br />';
+
+  					msg += '=========================================================================<br />';
+  					msg += 'List of all SENT transfers associated with the addresses:<br />';
+  					msg += '=========================================================================';
+  					msg += '<br /><br />';
+  					if(sentTransfers.length == 0) {
+  						msg += 'No data found';
+  						msg += '<br /><br />';
+  					} else {
+  						sentTransfers.forEach(function(bundle) {
+  							let timestamp = bundle[0].timestamp;
+  							msg += '======= Bundle (Timestamp tail transaction: '+ timestamp +') ======= <br />';
+  							bundle.forEach(function(transaction) {
+  								msg += JSON.stringify(transaction, null, "\t");
+  								msg += '<br /><br />';
+  							});
+  						});
+  					}
+
+  					msg += '=========================================================================<br />';
+  					msg += 'List of all RECEIVED transfers associated with the addresses:<br />';
+  					msg += '=========================================================================';
+  					msg += '<br /><br />';
+  					if(receivedTransfers.length == 0) {
+  						msg += 'No data found';
+  						msg += '<br /><br />';
+  					} else {
+  						receivedTransfers.forEach(function(bundle) {
+  							let timestamp = bundle[0].timestamp;
+  							msg += '======= Bundle (Timestamp tail transaction: '+ timestamp +') ======= <br />';
+  							bundle.forEach(function(transaction) {
+  								msg += JSON.stringify(transaction, null, "\t");
+  								msg += '<br /><br />';
+  							});
+  						});
+  					}
+
+  					// Leave commented out code in, incase we need it in the future!
+  					//msg += 'List of all transfers associated with the addresses:<br />';
+  					//msg += JSON.stringify(accountData.transfers, null, "\t");
+  					msg += '<'+'/pre>';
+  					msg += '<'+'/div>';
+  					msg += "<"+"/br><"+"/br>";
+
+  					document.getElementById(output).innerHTML = msg;
+  				}
+  				resolve(accountData);
+
+  			} else {
+  				reject(error);
+  			}
+  		});
+  	});
+  }
+
+  function accountData(){
+    checkSeedStorage();
+    let iota = getIOTA();
+
+		getAccountDataPromise('result').then(function(accountData){
+			let msg = '<div class="container">';
+			msg += '<pre>';
+			msg += 'Extract all JSON messages: \n';
+
+			accountData.transfers.forEach(function(transferList) {
+				// accountData.transfers is an array containing an array of transfer objects (transferList)
+				// The transfer objects in the same transferList belongs to the same bundle.
+				// For example: accountData.transfers = [[{a}{b}], [{c}], [{d}]]
+				// transferList = {a}{b}, transferList = {c},  transferList= {d}
+				let jsonData = iota.utils.extractJson(transferList);
+				if(jsonData != null) {
+					msg += jsonData +'\n';
+				}
+			});
+      console.log("in");
+			msg += '<'+'/pre>';
+			msg += '<'+'/div>';
+			document.getElementById('output2').innerHTML = msg;
+
+		}).catch(function(e){
+			alert(e);
+		});
   }
   </script>
 </body>
