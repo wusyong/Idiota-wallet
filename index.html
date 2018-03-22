@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Idiota Wallet</title>
+  <meta http-equiv="content-type" content="text/html; charset=utf-8" />
+  <script type="text/javascript" src="iota.min.js"></script>
+  <script type="text/javascript" src="sjcl.js"></script>
+
+</head>
+<body>
+  <!-- Node Selection -->
+  Select a full node:<br>
+  <select id='node'>
+    <option value='https://testnet140.tangle.works:443'>Testnet - https://testnet140.tangle.works:443</option>
+    <option value='https://nodes.thetangle.org:443'>Mainnet - https://nodes.thetangle.org:443 </option>
+  </select>
+  <br>
+  <div id="nodeInfo">
+    <button onclick="getNodeInfo()">Get node info</button>
+  </div>
+
+  <!-- Seed Generation -->
+  Seed generation:<br />
+  <select id='seedMethod' onchange='seedMethodSelection()'>
+  <option value='enterSeed'>Enter a seed</option>
+  <option value='secureSeed' selected='selected'>Create Secure Random Number seed</option>
+  </select> <button onclick="createSeed()" id='createSeedBtn'>Create Seed</button>
+  <button onclick="storeSeed()" id='storeSeedBtn'>Store Seed</button>
+  Seed checksum: <input type='text' id='seedChecksum' value='' maxlength='3' style='background-color: #ff1919;' readonly='readonly'/>
+  <br>
+  <input type='text' id='seed' size='90' />
+  <button onclick="removeSeedFromSessionStorage()">Remove Seed</button>
+  <br><br>
+
+  <!-- Address Generation -->
+  Address index :<br />
+  <input type='text' id='keyIndexStart' value='0'/>
+  <br>
+  Total number:<br />
+  <input type='text' id='numberOfAddresses' value='3'/>
+  <br>
+  Adds 9-tryte address checksum<br>
+  <input type="checkbox" name="checksum" id="checksum" checked="checked" />
+  <br>
+  returnAll (If true, it returns all addresses which were deterministically generated (until findTransactions returns null))<br>
+  <input type="checkbox" name="deterministic" id="deterministic"/>
+  <br>
+  <button onclick="generateAddresses()">Generate addresses</button>
+
+  <br>
+  <div id='result'></div>
+
+
+  <script type="text/javascript">
+  "use strict";
+  // Connect to IRI
+  function getIOTA(){
+  	let uri = document.getElementById('node').value;
+    uri = uri.trim();
+
+    const lastColonIndex = uri.lastIndexOf(":");
+    const host = uri.substring(0, lastColonIndex);
+    const port = uri.substring(lastColonIndex+1);
+
+    let iota = new IOTA({
+      'host': host,
+      'port': port
+    });
+
+  	return iota;
+  }
+
+  // seedgen
+  function checkSeedStorage(){
+  	let iota = getIOTA();
+
+  	if (sessionStorage.getItem('seed') == null) {
+  		alert('No seed stored in sessionStorage');
+  		throw new Error('No seed stored in sessionStorage');
+  	} else if (!iota.valid.isHash(sessionStorage.getItem('seed'))) {
+  		alert('Invalid seed in sessionStorage');
+  		throw new Error('Abort javascript: No seed stored in sessionStorage');
+  	}
+  }
+
+  function genSeed() {
+  	let seed = "";
+  	for(;seed.length < 81;seed += sjcl.codec.base64.fromBits(sjcl.random.randomWords(33, 10)).replace(/[^A-Z9]+/g, '')) {};
+  	return seed.substring(0,81);
+  }
+
+  function callSeeded() {
+  	document.getElementById("seed").value = genSeed();
+  }
+
+  function callProgress(p) {
+  	if(p != 1) {
+  		document.getElementById("seed").value = "Collecting entropy, please move your mouse/device\nProgress: " + p * 100 + "%"
+  	}
+  }
+
+  function createSeed(){
+  	const seedMethod = document.getElementById('seedMethod').value;
+  	let seed = '';
+
+  	if(seedMethod== "secureSeed") {
+  		// Source from: https://github.com/knarz/seedgen
+  		let gen = new sjcl.prng(10);
+  		gen.startCollectors();
+  		sjcl.random.addEventListener("seeded", callSeeded);
+  		sjcl.random.addEventListener("progress", callProgress);
+  	}
+
+  	document.getElementById('seed').value = seed;
+  }
+
+  function storeSeed(){
+  	let iota = getIOTA();
+
+  	let seed = document.getElementById('seed').value;
+
+  	// Validate seed
+  	seed = seed.trim();
+
+  	if (!iota.valid.isHash(seed)) {
+  		alert('The seed is not valid');
+  		throw new Error('The seed is not valid');
+  	}
+
+  	// Calculate 3 character seed checksum
+  	const seedChecksum = iota.utils.addChecksum(seed, 3, false).substr(-3);
+
+  	// Store seed to sessionStorage
+  	sessionStorage.setItem('seed', seed);
+
+  	// Clear seed variable for security reasons
+  	seed = '';
+  	document.getElementById('seed').value = "Seed stored in browser sessionStorage.";
+  	document.getElementById('seedChecksum').value = seedChecksum;
+  	document.getElementById('seedChecksum').style.backgroundColor = "#00e600";
+  }
+
+  function removeSeedFromSessionStorage(){
+  	// When browser or tab is closed the seed is deleted from sessionStorage.
+  	sessionStorage.removeItem('seed');
+  	document.getElementById('seed').value = "";
+  	document.getElementById('seedChecksum').value = "";
+  	document.getElementById('seedChecksum').style.backgroundColor = "#ff1919";
+  }
+
+  function seedMethodSelection(){
+  	const seedMethod = document.getElementById('seedMethod').value;
+  	removeSeedFromSessionStorage();
+
+  	sjcl.random.removeEventListener("seeded", callSeeded);
+  	sjcl.random.removeEventListener("progress", callProgress);
+
+  	if(seedMethod == "enterSeed") {
+  		document.getElementById('createSeedBtn').style.display = 'none';
+  	} else {
+      document.getElementById('createSeedBtn').style.display = 'inline';
+    }
+  }
+
+  // addressgen
+  const getNewAddressPromise = function(options, output) {
+  	return new Promise(function(resolve, reject){
+  		let iota = getIOTA();
+
+  		iota.api.getNewAddress(sessionStorage.getItem('seed'), options, function(error, inputs){
+  			if (error) {
+  				reject(error);
+  			} else {
+  				if(output != null) {
+  					let startIndex = options.index;
+  					let msg = '<div class="container">';
+  					for (let i=0; i<inputs.length; i++) {
+  						let address = inputs[i];
+  						msg += (startIndex + i) +" - "+ address + "<br />";
+  					}
+  					msg += "<"+"/div>";
+  					msg += "<"+"/br><"+"/br>";
+            console.log(msg);
+  					document.getElementById(output).innerHTML = msg;
+  				}
+  				resolve(inputs);
+  			}
+  		});
+  	});
+  }
+
+  function generateAddresses(){
+    checkSeedStorage();
+    let deterministic = document.getElementById('deterministic').checked;
+    let optionsNewAddress = {
+			index: parseInt(document.getElementById('keyIndexStart').value),
+			checksum: document.getElementById('checksum').checked,
+			security: 2,
+			returnAll: deterministic
+		}
+
+    if(!deterministic) {
+      optionsNewAddress.total = parseInt(document.getElementById('numberOfAddresses').value);
+      console.log("in");
+    }
+    getNewAddressPromise(optionsNewAddress, 'result').catch(function(e){
+      alert(e);
+    });
+  }
+
+  // getNodeInfo
+  const getNodeInfoPromise = function(output) {
+  	return new Promise(function(resolve, reject){
+
+      let iota = getIOTA();
+
+  		iota.api.getNodeInfo(function( e, nodeInfo ) {
+  			if(!e) {
+  				if(output != null) {
+  					let msg = '<div class="container"><pre>';
+  					msg += JSON.stringify(nodeInfo, null, "\t");
+  					msg += "</pre></div></br></br>";
+  					document.getElementById(output).innerHTML = msg;
+  				}
+  				resolve(nodeInfo);
+  			} else {
+  				reject(e);
+  			}
+  		});
+  	});
+  }
+
+  function getNodeInfo(){
+    getNodeInfoPromise('result').catch(function(e){
+      //clearOutput();
+      alert(e);
+    });
+  }
+  </script>
+</body>
+</html>
