@@ -53,8 +53,6 @@
   <!-- Account Detail-->
   <button onclick="accountData()">Show account data</button>
   <div id='result'></div>
-  <br>@@@
-  <div id='output2'></div>
 
 
   <script type="text/javascript">
@@ -309,6 +307,8 @@
   				if(output != null) {
   					let msg = '<div class="container">';
   					msg += '<pre>';
+            msg += JSON.stringify(accountData, null, "\t");
+            /*
   					msg += 'Overview:<br />';
   					let counter = 0;
 
@@ -381,7 +381,7 @@
   								msg += '<br /><br />';
   							});
   						});
-  					}
+  					}*/
 
   					// Leave commented out code in, incase we need it in the future!
   					//msg += 'List of all transfers associated with the addresses:<br />';
@@ -420,10 +420,9 @@
 					msg += jsonData +'\n';
 				}
 			});
-      console.log("in");
 			msg += '<'+'/pre>';
 			msg += '<'+'/div>';
-			document.getElementById('output2').innerHTML = msg;
+			document.getElementById('result').innerHTML += msg;
 
 		}).catch(function(e){
 			alert(e);
