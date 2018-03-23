@@ -28,7 +28,7 @@
   <button onclick="storeSeed()" id='storeSeedBtn'>Store Seed</button>
   Seed checksum: <input type='text' id='seedChecksum' value='' maxlength='3' style='background-color: #ff1919;' readonly='readonly'/>
   <br>
-  <input type='text' id='seed' size='90' />
+  <input type='text' id='seed' value='SMRUKAKOPAKXQSIKVZWQGQAKZZWL9BGEFJCIEBRJDIAGWFHUKAOSWACNC9JFDU9WHAPZBEIGWBU9VTNZS' size='90' />
   <button onclick="removeSeedFromSessionStorage()">Remove Seed</button>
   <br><br>
 
@@ -52,6 +52,33 @@
 
   <!-- Account Detail-->
   <button onclick="accountData()">Show account data</button>
+
+  <br>
+  <!-- Send Transaction -->
+  Recipient address:<br>
+  <input type='text' id='recipientAddress' value='ITUDVAQILBHLKLTAAAMPRLZKOGJG9E9MNVKEPZGNEPR9GPF9KKPJUAJTAOTJUMFZSVBQNHXD9JQIRXVYC' size='100' />
+  <br>
+
+  Amount:<br>
+  <input type='text' id='amount' value='0'/>
+  <br>
+
+  Message:
+  <br>
+  <input id='messageToSend'></input><br />
+  <select id='messageOrJSON'>
+  <option value='isNoJSON' selected='selected'>Message is not a JSON message</option>
+  <option value='isJSON'>Message is a JSON message</option>
+  <select>
+  <button onclick="checkMessageValidity()">Check message validity</button>
+  <br /><br />
+
+  Tag:<br />
+  <input type='text' id='tag' value='' maxlength='27'/>
+  <br /><br />
+
+  <button onclick="sendTransaction()">Send transaction</button>
+  <br>
   <div id='result'></div>
 
 
@@ -192,11 +219,11 @@
   	});
   }
 
-  const sendTransferPromise = function(depth, minWeightMagnitude, transfer, output) {
+  const sendTransferPromise = function(depth, minWeightMagnitude, transfer, options, output) {
 
   	return new Promise(function(resolve, reject){
   		let iota = getIOTA();
-  		iota.api.sendTransfer(sessionStorage.getItem('seed'), depth, minWeightMagnitude, transfer, function( e, attach ) {
+  		iota.api.sendTransfer(sessionStorage.getItem('seed'), depth, minWeightMagnitude, transfer, options, function( e, attach ) {
   			if(!e) {
   				if(output != null) {
   					let msg = '<div class="container">';
@@ -256,7 +283,7 @@
   					security: 2
   				};
 
-  				return sendTransferPromise(3, 9, transfer, 'result');
+  				return sendTransferPromise(3, 9, transfer, optionsSendTransfer, 'result');
         }
 
 			}).catch(function(e){
@@ -427,6 +454,149 @@
 		}).catch(function(e){
 			alert(e);
 		});
+  }
+
+  // transaction
+  function checkMessageValidity() {
+  	let messageToSend = document.getElementById("messageToSend").value;
+  	const messageOrJSON = document.getElementById("messageOrJSON").value;
+
+  	if(messageToSend.trim() != "") {
+  		let iota = getIOTA();
+
+  		// Check if message is a valid JSON message
+  		if(messageOrJSON == "isJSON") {
+  			if(!isJsonString(messageToSend)) {
+  				alert('Message is not a valid JSON message');
+  				return;
+  			}
+  		}
+
+  		let messageToSendTrytes = iota.utils.toTrytes(messageToSend);
+
+  		if(messageToSendTrytes == null) {
+  			alert('Message contains invalid ASCII character(s)');
+  		} else {
+  			let messageLength = messageToSendTrytes.length;
+
+  			// Calculate the number of transactions required to store the message.
+  			let numberOfFragments = Math.ceil(messageLength / 2187);
+  			alert("Message is valid.\nThe message contains: "+messageLength+" trytes.\nThe signatureMessageFragment field can hold max 2187 trytes.\nThe message will be fragmented and stored in "+numberOfFragments+" transaction(s).");
+        return messageToSendTrytes;
+      }
+  	}
+  }
+
+  function sendTransaction(){
+    checkSeedStorage();
+
+    // Get inputs for transaction
+		let optionsGetInputs = {
+			threshold: parseInt(document.getElementById('amount').value),
+			security: 2
+		}
+
+    getInputsPromise(optionsGetInputs, 'result').then(function(data){
+
+      let tagToSend = document.getElementById('tag').value;
+      tagToSend = tagToSend.toUpperCase();
+      const max = 27 - tagToSend.length;
+      for (let i = 0; i < max; i++) {
+        tagToSend += '9';
+      }
+
+			let transfer = [{
+				address: document.getElementById('recipientAddress').value,
+				value: optionsGetInputs.threshold,
+				message: checkMessageValidity(),
+				tag: tagToSend
+			}];
+
+			let optionsSendTransfer = {
+				inputs: data.inputs
+			}
+
+			return sendTransferPromise(3, 9, transfer, optionsSendTransfer, 'result');
+
+		}).then(function(transactions){
+			// Extract the tail transaction hash from the response
+			const tailHash = transactions[0].hash;
+			const hashArr = [tailHash];
+
+			return getLatestInclusionPromise(hashArr, 'result');
+
+		}).catch(function(e){
+			alert(e);
+		});
+  }
+
+  const getInputsPromise = function(options, output) {
+
+  	return new Promise(function(resolve, reject){
+  		let iota = getIOTA();
+      console.log(options);
+  		iota.api.getInputs(sessionStorage.getItem('seed'), options, function( error, data ) {
+
+  			if(!error) {
+  				if(output != null) {
+  					let msg = '<div class="container">';
+  					msg += '<pre>';
+  					msg += 'Inputs used for transaction: \n\n';
+  					if(data.inputs.length == 0) {
+  						msg += 'No data found \n';
+  					} else {
+  						data.inputs.forEach(function(input) {
+  							msg += 'address: '+input.address+'\n';
+  							msg += 'balance: '+input.balance+'\n';
+  							msg += 'keyIndex: '+input.keyIndex+'\n';
+  							msg += 'security: '+input.security;
+  							msg += '\n\n';
+  						});
+  					}
+  					msg += 'Aggregated balance of all inputs: '+data.totalBalance;
+  					msg += '<'+'/pre>';
+  					msg += '<'+'/div>';
+  					msg += "<"+"/br><"+"/br>";
+  					document.getElementById(output).innerHTML = msg;
+  				}
+  				resolve(data);
+  			} else {
+  				reject(error);
+  			}
+  		});
+  	});
+  }
+
+  const getLatestInclusionPromise = function(hashArr, output) {
+
+  	return new Promise(function(resolve, reject){
+  		let iota = getIOTA();
+
+  		iota.api.getLatestInclusion(hashArr, function( error, states) {
+
+  			if(!error) {
+  				if(output != '') {
+  					let msg = '<div class="container">';
+  					msg += '<pre>';
+  					msg += 'Transaction status: \n\n';
+  					states.forEach(function(confirmed, i) {
+  						if (confirmed) {
+  							msg += 'Transaction with tail hash: '+ hashArr[i] +' is confirmed.\n';
+  						} else {
+  							msg += 'Transaction with tail hash: '+ hashArr[i] +' is pending.\n';
+  						}
+  					});
+  					msg += '<'+'/pre>';
+  					msg += '<'+'/div>';
+  					msg += "<"+"/br><"+"/br>";
+  					document.getElementById(output).innerHTML += msg;
+  				}
+  				resolve(states);
+  			} else {
+  				reject(error);
+  			}
+  		});
+  	});
   }
   </script>
 </body>
